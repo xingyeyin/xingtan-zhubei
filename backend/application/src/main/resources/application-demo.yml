@@ -1,0 +1,21 @@
+# 演示模式：使用内置 H2 数据库，无需安装 PostgreSQL，用于快速看效果
+spring:
+  datasource:
+    url: "jdbc:h2:mem:xingtan;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE"
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+  sql:
+    init:
+      mode: always
+      encoding: UTF-8
+      schema-locations: classpath:db/h2-schema.sql
+
+h2:
+  console:
+    enabled: true
+    path: /h2-console
+
+mybatis-plus:
+  configuration:
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl

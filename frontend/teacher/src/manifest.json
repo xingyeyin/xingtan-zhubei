@@ -1,0 +1,14 @@
+{
+  "name": "杏坛智备",
+  "appid": "",
+  "description": "乡村教师 AI 备课助手",
+  "versionName": "0.1.0",
+  "versionCode": "1",
+  "transformPx": false,
+  "app-plus": {
+    "usingComponents": true,
+    "nvueStyleCompiler": "uni-app",
+    "compilerVersion": 3
+  },
+  "vueVersion": "3"
+}

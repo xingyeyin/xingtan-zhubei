@@ -1,0 +1,98 @@
+{
+  "pages": [
+    {
+      "path": "pages/auth/login",
+      "style": { "navigationBarTitleText": "登录" }
+    },
+    {
+      "path": "pages/auth/register",
+      "style": { "navigationBarTitleText": "注册" }
+    },
+    {
+      "path": "pages/mine/profile",
+      "style": { "navigationBarTitleText": "我的资料" }
+    },
+    {
+      "path": "pages/mine/report",
+      "style": { "navigationBarTitleText": "使用报告" }
+    },
+    {
+      "path": "pages/mine/feedback",
+      "style": { "navigationBarTitleText": "意见反馈" }
+    },
+    {
+      "path": "pages/mine/settings",
+      "style": { "navigationBarTitleText": "设置" }
+    },
+    {
+      "path": "pages/mine/help",
+      "style": { "navigationBarTitleText": "帮助中心" }
+    },
+    {
+      "path": "pages/ai/assistant",
+      "style": { "navigationBarTitleText": "智能助手" }
+    },
+    {
+      "path": "pages/lesson/upload",
+      "style": { "navigationBarTitleText": "导入课件" }
+    },
+    {
+      "path": "pages/lesson/share",
+      "style": { "navigationBarTitleText": "教案分享" }
+    },
+    {
+      "path": "pages/resource/plaza",
+      "style": { "navigationBarTitleText": "教研广场" }
+    },
+    {
+      "path": "pages/class/index",
+      "style": { "navigationBarTitleText": "班级学情" }
+    },
+    {
+      "path": "pages/class/detail",
+      "style": { "navigationBarTitleText": "班级详情" }
+    },
+    {
+      "path": "pages/index/index",
+      "style": { "navigationBarTitleText": "杏坛智备" }
+    },
+    {
+      "path": "pages/lesson/list",
+      "style": { "navigationBarTitleText": "我的备课" }
+    },
+    {
+      "path": "pages/lesson/wizard",
+      "style": { "navigationBarTitleText": "新建备课" }
+    },
+    {
+      "path": "pages/lesson/editor",
+      "style": { "navigationBarTitleText": "教案编辑" }
+    },
+    {
+      "path": "pages/resource/index",
+      "style": { "navigationBarTitleText": "资源库" }
+    },
+    {
+      "path": "pages/mine/index",
+      "style": { "navigationBarTitleText": "我的" }
+    }
+  ],
+  "tabBar": {
+    "color": "#8a8a8a",
+    "selectedColor": "#2e6b4f",
+    "backgroundColor": "#ffffff",
+    "borderStyle": "black",
+    "list": [
+      { "pagePath": "pages/index/index", "text": "首页" },
+      { "pagePath": "pages/lesson/list", "text": "备课" },
+      { "pagePath": "pages/resource/index", "text": "资源" },
+      { "pagePath": "pages/mine/index", "text": "我的" }
+    ]
+  },
+  "globalStyle": {
+    "navigationBarTextStyle": "black",
+    "navigationBarTitleText": "杏坛智备",
+    "navigationBarBackgroundColor": "#F7F4EC",
+    "backgroundColor": "#F7F4EC"
+  }
+}

@@ -1,0 +1,29 @@
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# Java / Maven
+target/
+*.class
+*.jar
+!.mvn/wrapper/maven-wrapper.jar
+
+# Node
+node_modules/
+dist/
+unpackage/
+.hbuilderx/
+
+# 环境与密钥
+.env
+*.local.yml
+backend/application/src/main/resources/application-local.yml
+
+# 系统
+.DS_Store
+Thumbs.db
+logs/
+backups/
+.tmp/
+uploads/

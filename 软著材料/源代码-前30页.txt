@@ -1,0 +1,1560 @@
+杏坛智备乡村教师AI备课助手软件 V1.0    第 1 页（共 86 页）
+// ===== backend\admin\src\main\java\com\xingtan\admin\controller\AdminController.java =====
+package com.xingtan.admin.controller;
+
+import com.xingtan.ai.config.AiProperties;
+import com.xingtan.common.result.Result;
+import lombok.RequiredArgsConstructor;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.util.LinkedHashMap;
+import java.util.Map;
+
+/**
+ * 管理端基础接口
+ */
+@RestController
+@RequestMapping("/api/admin")
+@RequiredArgsConstructor
+public class AdminController {
+
+    private final AiProperties aiProperties;
+
+    @GetMapping("/ping")
+    public Result<Map<String, Object>> ping() {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("service", "xingtan-backend");
+        data.put("status", "UP");
+        return Result.ok(data);
+    }
+
+    @GetMapping("/config")
+    public Result<Map<String, Object>> config() {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("defaultProvider", aiProperties.getDefaultProvider());
+        Map<String, Object> providers = new LinkedHashMap<>();
+        aiProperties.getProviders().forEach((name, cfg) -> {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("baseUrl", cfg.getBaseUrl());
+            m.put("model", cfg.getModel());
+            String key = cfg.getApiKey();
+            m.put("configured", key != null && !key.isBlank());
+            m.put("apiKeyMasked", key == null || key.isBlank() ? "" : key.substring(0, Math.min(6, key.length())) + "****");
+            providers.put(name, m);
+        });
+        data.put("providers", providers);
+        return Result.ok(data);
+    }
+}
+
+
+杏坛智备乡村教师AI备课助手软件 V1.0    第 2 页（共 86 页）
+// ===== backend\ai\src\main\java\com\xingtan\ai\config\AiProperties.java =====
+package com.xingtan.ai.config;
+
+import lombok.Data;
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.stereotype.Component;
+
+import java.util.HashMap;
+import java.util.Map;
+
+/**
+ * AI 相关配置：xingtan.ai.*
+ */
+@Data
+@Component
+@ConfigurationProperties(prefix = "xingtan.ai")
+public class AiProperties {
+
+    private String defaultProvider = "deepseek";
+    private Map<String, ProviderConfig> providers = new HashMap<>();
+}
+
+// ===== backend\ai\src\main\java\com\xingtan\ai\config\ProviderConfig.java =====
+package com.xingtan.ai.config;
+
+import lombok.Data;
+
+/**
+ * 模型供应商配置
+ */
+@Data
+public class ProviderConfig {
+
+    private String baseUrl;
+    private String apiKey;
+    private String model;
+}
+
+// ===== backend\ai\src\main\java\com\xingtan\ai\controller\AiChatController.java =====
+package com.xingtan.ai.controller;
+
+import com.xingtan.ai.gateway.LlmRouter;
+import com.xingtan.common.result.Result;
+import lombok.RequiredArgsConstructor;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.util.Map;
+
+杏坛智备乡村教师AI备课助手软件 V1.0    第 3 页（共 86 页）
+
+/**
+ * AI 对话接口（教案追问/修改建议）
+ */
+@RestController
+@RequestMapping("/api/ai")
+@RequiredArgsConstructor
+public class AiChatController {
+
+    private final LlmRouter llmRouter;
+
+    @PostMapping("/chat")
+    public Result<String> chat(@RequestBody Map<String, Object> request) {
+        String message = request.get("message") == null ? "" : request.get("message").toString();
+        String system = "你是乡村教师的 AI 备课助手。回答要简洁、实用、可操作，"
+                + "符合义务教育课程标准理念，必要时给出具体教学建议或示例。";
+        return Result.ok(llmRouter.complete(null, system, message));
+    }
+}
+
+// ===== backend\ai\src\main\java\com\xingtan\ai\controller\GenerationController.java =====
+package com.xingtan.ai.controller;
+
+import com.xingtan.ai.entity.GenerationTask;
+import com.xingtan.ai.service.GenerationService;
+import com.xingtan.common.result.Result;
+import lombok.RequiredArgsConstructor;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.util.Map;
+
+/**
+ * 生成任务接口
+ */
+@RestController
+@RequestMapping("/api/generations")
+@RequiredArgsConstructor
+public class GenerationController {
+
+    private final GenerationService generationService;
+
+    @PostMapping
+    public Result<GenerationTask> create(@RequestBody Map<String, Object> request) {
+        Long userId = request.get("userId") == null ? 1L : Long.valueOf(request.get("userId").toString());
+        String scene = request.get("scene") == null ? null : request.get("scene").toString();
+
+杏坛智备乡村教师AI备课助手软件 V1.0    第 4 页（共 86 页）
+        @SuppressWarnings("unchecked")
+        Map<String, Object> params = request.get("params") == null ? Map.of()
+                : (Map<String, Object>) request.get("params");
+        GenerationTask task = generationService.create(userId, scene, params);
+        generationService.submitAsync(task.getId());
+        return Result.ok(task);
+    }
+
+    @GetMapping("/{id}")
+    public Result<Map<String, Object>> get(@PathVariable Long id) {
+        return Result.ok(generationService.detail(id));
+    }
+}
+
+// ===== backend\ai\src\main\java\com\xingtan\ai\entity\GenerationTask.java =====
+package com.xingtan.ai.entity;
+
+import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableId;
+import com.baomidou.mybatisplus.annotation.TableName;
+import lombok.Data;
+
+import java.time.LocalDateTime;
+
+/**
+ * 生成任务
+ */
+@Data
+@TableName("generation_task")
+public class GenerationTask {
+
+    @TableId(type = IdType.AUTO)
+    private Long id;
+    private Long userId;
+    private String scene;
+    private String params;
+    private String provider;
+    private String status;
+    private String errorMessage;
+    private Integer costCents;
+    private LocalDateTime createdAt;
+    private LocalDateTime updatedAt;
+}
+
+// ===== backend\ai\src\main\java\com\xingtan\ai\entity\PromptTemplate.java =====
+package com.xingtan.ai.entity;
+
+import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableId;
+import com.baomidou.mybatisplus.annotation.TableName;
+
+杏坛智备乡村教师AI备课助手软件 V1.0    第 5 页（共 86 页）
+import lombok.Data;
+
+import java.time.LocalDateTime;
+
+/**
+ * 提示词模板
+ */
+@Data
+@TableName("prompt_template")
+public class PromptTemplate {
+
+    @TableId(type = IdType.AUTO)
+    private Long id;
+    private String scene;
+    private String subject;
+    private String lessonType;
+    private Integer version;
+    private String content;
+    private String config;
+    private Integer status;
+    private LocalDateTime createdAt;
+}
+
+// ===== backend\ai\src\main\java\com\xingtan\ai\gateway\LlmGateway.java =====
+package com.xingtan.ai.gateway;
+
+import com.xingtan.ai.config.ProviderConfig;
+
+/**
+ * 大模型网关抽象（后续可扩展流式、函数调用等）
+ */
+public interface LlmGateway {
+
+    String complete(ProviderConfig provider, String systemPrompt, String userPrompt);
+}
+
+// ===== backend\ai\src\main\java\com\xingtan\ai\gateway\LlmRouter.java =====
+package com.xingtan.ai.gateway;
+
+import com.xingtan.ai.config.AiProperties;
+import com.xingtan.ai.config.ProviderConfig;
+import com.xingtan.common.exception.BusinessException;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Service;
+
+/**
+ * 多模型路由：按配置选择供应商，自动容灾切换（后续增强）
+ */
+@Service
+@RequiredArgsConstructor
+
+杏坛智备乡村教师AI备课助手软件 V1.0    第 6 页（共 86 页）
+public class LlmRouter {
+
+    private final AiProperties aiProperties;
+    private final OpenAiCompatLlmGateway gateway;
+
+    public String complete(String providerName, String systemPrompt, String userPrompt) {
+        String name = providerName == null || providerName.isBlank()
+                ? aiProperties.getDefaultProvider() : providerName;
+        ProviderConfig config = aiProperties.getProviders().get(name);
+        if (config == null) {
+            throw new BusinessException(500, "未配置模型供应商: " + name);
+        }
+        return gateway.complete(config, systemPrompt, userPrompt);
+    }
+}
+
+// ===== backend\ai\src\main\java\com\xingtan\ai\gateway\OpenAiCompatLlmGateway.java =====
+package com.xingtan.ai.gateway;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.xingtan.ai.config.ProviderConfig;
+import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.stereotype.Component;
+import org.springframework.web.client.RestClient;
+
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * OpenAI 兼容协议网关（DeepSeek / 通义千问 compatible-mode 均支持）
+ */
+@Component
+@RequiredArgsConstructor
+public class OpenAiCompatLlmGateway implements LlmGateway {
+
+    private final RestClient.Builder restClientBuilder;
+    private final ObjectMapper objectMapper;
+
+    @Override
+    public String complete(ProviderConfig provider, String systemPrompt, String userPrompt) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("model", provider.getModel());
+        body.put("messages", List.of(
+                Map.of("role", "system", "content", systemPrompt),
+                Map.of("role", "user", "content", userPrompt)));
+        body.put("temperature", 0.7);
+
+杏坛智备乡村教师AI备课助手软件 V1.0    第 7 页（共 86 页）
+        body.put("response_format", Map.of("type", "json_object"));
+        body.put("stream", false);
+
+        String response = restClientBuilder.build()
+                .post()
+                .uri(provider.getBaseUrl() + "/chat/completions")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + provider.getApiKey())
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .body(String.class);
+
+        try {
+            JsonNode node = objectMapper.readTree(response);
+            return node.path("choices").path(0).path("message").path("content").asText();
+        } catch (Exception e) {
+            throw new IllegalStateException("解析模型返回失败: " + e.getMessage(), e);
+        }
+    }
+}
+
+// ===== backend\ai\src\main\java\com\xingtan\ai\mapper\GenerationTaskMapper.java =====
+package com.xingtan.ai.mapper;
+
+import com.baomidou.mybatisplus.core.mapper.BaseMapper;
+import com.xingtan.ai.entity.GenerationTask;
+import org.apache.ibatis.annotations.Mapper;
+
+/**
+ * 生成任务 Mapper
+ */
+@Mapper
+public interface GenerationTaskMapper extends BaseMapper<GenerationTask> {
+}
+
+// ===== backend\ai\src\main\java\com\xingtan\ai\mapper\PromptTemplateMapper.java =====
+package com.xingtan.ai.mapper;
+
+import com.baomidou.mybatisplus.core.mapper.BaseMapper;
+import com.xingtan.ai.entity.PromptTemplate;
+import org.apache.ibatis.annotations.Mapper;
+
+/**
+ * 提示词模板 Mapper
+ */
+@Mapper
+public interface PromptTemplateMapper extends BaseMapper<PromptTemplate> {
+}
+
+// ===== backend\ai\src\main\java\com\xingtan\ai\service\GenerationService.java =====
+
+杏坛智备乡村教师AI备课助手软件 V1.0    第 8 页（共 86 页）
+package com.xingtan.ai.service;
+
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.xingtan.ai.entity.GenerationTask;
+import com.xingtan.ai.entity.PromptTemplate;
+import com.xingtan.ai.gateway.LlmRouter;
+import com.xingtan.ai.mapper.GenerationTaskMapper;
+import com.xingtan.ai.mapper.PromptTemplateMapper;
+import com.xingtan.common.exception.BusinessException;
+import com.xingtan.kb.entity.KbChunk;
+import com.xingtan.kb.entity.KbDocument;
+import com.xingtan.kb.mapper.KbChunkMapper;
+import com.xingtan.kb.mapper.KbDocumentMapper;
+import com.xingtan.lesson.entity.LessonPlan;
+import com.xingtan.lesson.entity.LessonSection;
+import com.xingtan.lesson.mapper.LessonPlanMapper;
+import com.xingtan.lesson.mapper.LessonSectionMapper;
+import com.xingtan.stats.entity.UsageLog;
+import com.xingtan.stats.mapper.UsageLogMapper;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+
+import java.time.LocalDateTime;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.stream.Collectors;
+
+/**
+ * 生成任务服务
+ * 生成管线：意图理解 → 知识定位（课标/教材/模板/案例召回）→ 大模型生成 → 结构化解析 → 落库
+ */
+@Service
+@RequiredArgsConstructor
+@Slf4j
+public class GenerationService {
+
+    private static final ExecutorService EXECUTOR = Executors.newSingleThreadExecutor();
+
+    private final GenerationTaskMapper taskMapper;
+    private final PromptTemplateMapper templateMapper;
+    private final LessonPlanMapper lessonPlanMapper;
+
+杏坛智备乡村教师AI备课助手软件 V1.0    第 9 页（共 86 页）
+    private final LessonSectionMapper sectionMapper;
+    private final KbChunkMapper chunkMapper;
+    private final KbDocumentMapper documentMapper;
+    private final UsageLogMapper usageLogMapper;
+    private final LlmRouter llmRouter;
+    private final ObjectMapper objectMapper;
+
+    public GenerationTask create(Long userId, String scene, Map<String, Object> params) {
+        GenerationTask task = new GenerationTask();
+        task.setUserId(userId);
+        task.setScene(scene == null ? "LESSON_PLAN" : scene);
+        try {
+            task.setParams(objectMapper.writeValueAsString(params == null ? Map.of() : params));
+        } catch (Exception e) {
+            task.setParams("{}");
+        }
+        task.setStatus("PENDING");
+        task.setCostCents(0);
+        taskMapper.insert(task);
+        return task;
+    }
+
+    public void submitAsync(Long taskId) {
+        CompletableFuture.runAsync(() -> {
+            try {
+                generate(taskId);
+            } catch (Exception e) {
+                markStatus(taskId, "FAILED", e.getMessage());
+            }
+        }, EXECUTOR);
+    }
+
+    public GenerationTask get(Long taskId) {
+        GenerationTask task = taskMapper.selectById(taskId);
+        if (task == null) {
+            throw new BusinessException(404, "生成任务不存在");
+        }
+        return task;
+    }
+
+    public Map<String, Object> detail(Long taskId) {
+        GenerationTask task = get(taskId);
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("task", task);
+        if ("SUCCESS".equals(task.getStatus())) {
+            LessonPlan plan = lessonPlanMapper.selectOne(
+                    new LambdaQueryWrapper<LessonPlan>().eq(LessonPlan::getTaskId, taskId).last("limit 1"));
+            result.put("lessonPlan", plan);
+        }
+        return result;
+
+杏坛智备乡村教师AI备课助手软件 V1.0    第 10 页（共 86 页）
+    }
+
+    public void markStatus(Long taskId, String status, String errorMessage) {
+        GenerationTask task = new GenerationTask();
+        task.setId(taskId);
+        task.setStatus(status);
+        task.setErrorMessage(errorMessage);
+        task.setUpdatedAt(LocalDateTime.now());
+        taskMapper.updateById(task);
+    }
+
+    private void generate(Long taskId) throws Exception {
+        GenerationTask task = get(taskId);
+        long start = System.currentTimeMillis();
+        markStatus(taskId, "RUNNING", null);
+
+        Map<String, Object> params = readParams(task.getParams());
+        String subject = str(params, "subject");
+        String grade = str(params, "grade");
+        String textbook = str(params, "textbook");
+        String title = str(params, "title");
+        String lessonType = str(params, "lessonType");
+        String extra = str(params, "extra");
+        if (title == null || title.isBlank()) {
+            throw new BusinessException("缺少课题，无法生成教案");
+        }
+
+        String coreKnowledge = recallCore(subject, title);
+        String caseKnowledge = recallCases();
+        String system = loadTemplate("LESSON_PLAN");
+        String user = buildPrompt(subject, grade, textbook, title, lessonType, extra, coreKnowledge, caseKnowledge);
+
+        String raw = llmRouter.complete(task.getProvider(), system, user);
+        log.info("模型原始返回(前500字符): {}", raw == null ? "null" : raw.substring(0, Math.min(500, raw.length())));
+        JsonNode root = parseJson(raw);
+        if (!root.path("objectives").isArray() || root.path("objectives").isEmpty()
+                || !root.path("process").isArray() || root.path("process").isEmpty()) {
+            throw new BusinessException("模型返回内容不完整，请重新生成");
+        }
+
+        LessonPlan plan = new LessonPlan();
+        plan.setTaskId(taskId);
+        plan.setUserId(task.getUserId());
+        plan.setTitle(root.path("title").asText(title));
+        plan.setSubject(subject);
+        plan.setGrade(grade);
+        plan.setTextbook(textbook);
+        plan.setLessonType(lessonType);
+        plan.setContent(root.toString());
+        plan.setQualityScore(root.path("qualityScore").asInt(0));
+
+杏坛智备乡村教师AI备课助手软件 V1.0    第 11 页（共 86 页）
+        plan.setStatus(1);
+        lessonPlanMapper.insert(plan);
+        saveSections(plan.getId(), root);
+
+        UsageLog log = new UsageLog();
+        log.setUserId(task.getUserId());
+        log.setSchoolId(1L);
+        log.setAction("GENERATE");
+        log.setScene("LESSON_PLAN");
+        log.setDurationSec((int) ((System.currentTimeMillis() - start) / 1000));
+        usageLogMapper.insert(log);
+
+        markStatus(taskId, "SUCCESS", null);
+    }
+
+    private Map<String, Object> readParams(String json) {
+        if (json == null || json.isBlank()) {
+            return new HashMap<>();
+        }
+        try {
+            return objectMapper.readValue(json, Map.class);
+        } catch (Exception e) {
+            return new HashMap<>();
+        }
+    }
+
+    private String str(Map<String, Object> params, String key) {
+        Object v = params.get(key);
+        return v == null ? null : v.toString();
+    }
+
+    private String recallCore(String subject, String title) {
+        List<KbChunk> chunks = chunkMapper.selectList(null);
+        if (chunks.isEmpty()) {
+            return "";
+        }
+        Set<Long> ids = chunks.stream().map(KbChunk::getDocId).collect(Collectors.toSet());
+        Map<Long, KbDocument> docs = new HashMap<>();
+        for (KbDocument doc : documentMapper.selectBatchIds(ids)) {
+            docs.put(doc.getId(), doc);
+        }
+        String kw = title == null ? "" : title.replaceAll("[《》\"'“”‘’\\s]", "");
+        List<String> matched = chunks.stream()
+                .filter(c -> {
+                    KbDocument doc = docs.get(c.getDocId());
+                    if (doc == null) {
+                        return false;
+                    }
+                    boolean subjectMatch = subject != null && !subject.isBlank()
+                            && doc.getSubject() != null && doc.getSubject().contains(subject);
+
+杏坛智备乡村教师AI备课助手软件 V1.0    第 12 页（共 86 页）
+                    boolean kwMatch = kw.length() > 0 && c.getContent().contains(kw);
+                    return subjectMatch || kwMatch;
+                })
+                .limit(6)
+                .map(KbChunk::getContent)
+                .collect(Collectors.toList());
+        // 教案模板总是作为补充上下文
+        for (KbChunk c : chunks) {
+            KbDocument doc = docs.get(c.getDocId());
+            if (doc != null && "TEMPLATE".equals(doc.getDocType())) {
+                matched.add(c.getContent());
+            }
+        }
+        return matched.stream().distinct().collect(Collectors.joining("\n"));
+    }
+
+    private String recallCases() {
+        List<KbChunk> chunks = chunkMapper.selectList(null);
+        if (chunks.isEmpty()) {
+            return "";
+        }
+        Set<Long> ids = chunks.stream().map(KbChunk::getDocId).collect(Collectors.toSet());
+        Map<Long, KbDocument> docs = new HashMap<>();
+        for (KbDocument doc : documentMapper.selectBatchIds(ids)) {
+            docs.put(doc.getId(), doc);
+        }
+        return chunks.stream()
+                .filter(c -> {
+                    KbDocument doc = docs.get(c.getDocId());
+                    return doc != null && "CASE".equals(doc.getDocType());
+                })
+                .map(KbChunk::getContent)
+                .collect(Collectors.joining("\n"));
+    }
+
+    private String loadTemplate(String scene) {
+        PromptTemplate template = templateMapper.selectOne(
+                new LambdaQueryWrapper<PromptTemplate>()
+                        .eq(PromptTemplate::getScene, scene)
+                        .orderByDesc(PromptTemplate::getVersion)
+                        .last("limit 1"));
+        if (template != null && template.getContent() != null) {
+            return template.getContent();
+        }
+        return "你是资深中小学教研专家，依据2022版义务教育课程标准生成高质量教案，"
+                + "输出严格的 JSON 格式（字段：title, subject, grade, textbook, lessonType, "
+                + "objectives[{type,content,standardRef}], keyPoints[], difficultPoints[], "
+                + "process[{stage,duration,activities,teacher,student}], boardDesign, "
+                + "homework[{level,items[]}], qualityScore, standardCards[{ref,content}]）。"
+                + "要求：教学目标对应核心素养；教学过程标注环节与时长（总计约40分钟）；语言具体可操作；"
+
+杏坛智备乡村教师AI备课助手软件 V1.0    第 13 页（共 86 页）
+                + "必须包含课标依据卡片。只输出 JSON。";
+    }
+
+    private String buildPrompt(String subject, String grade, String textbook, String title,
+                               String lessonType, String extra, String coreKnowledge, String caseKnowledge) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("【课题与要求】\n");
+        sb.append("学科：").append(subject == null ? "" : subject).append("\n");
+        sb.append("年级：").append(grade == null ? "" : grade).append("\n");
+        sb.append("教材版本：").append(textbook == null ? "" : textbook).append("\n");
+        sb.append("课题：").append(title).append("\n");
+        sb.append("课型：").append(lessonType == null || lessonType.isBlank() ? "新授课" : lessonType).append("\n");
+        sb.append("补充要求：").append(extra == null ? "" : extra).append("\n");
+        if (coreKnowledge != null && !coreKnowledge.isBlank()) {
+            sb.append("\n【课标与教材参考材料】（辅助生成，教案必须严格围绕上面的课题）\n")
+                    .append(coreKnowledge).append("\n");
+        }
+        if (caseKnowledge != null && !caseKnowledge.isBlank()) {
+            sb.append("\n【可选乡土素材】（仅当与课题相关或情境导入需要时使用，不得喧宾夺主）\n")
+                    .append(caseKnowledge).append("\n");
+        }
+        sb.append("\n请严格按照系统提示的 JSON 结构输出教案，只输出 JSON，不要输出任何其他文字。");
+        return sb.toString();
+    }
+
+    private JsonNode parseJson(String raw) throws Exception {
+        String s = raw == null ? "" : raw.trim();
+        if (s.startsWith("```")) {
+            s = s.replaceFirst("^```[a-zA-Z]*", "").trim();
+        }
+        if (s.endsWith("```")) {
+            s = s.substring(0, s.lastIndexOf("```")).trim();
+        }
+        return objectMapper.readTree(s);
+    }
+
+    private void saveSections(Long planId, JsonNode root) {
+        int seq = 0;
+        for (JsonNode obj : root.path("objectives")) {
+            insertSection(planId, "OBJECTIVE", seq++, obj.toString(), obj.path("standardRef").asText(null));
+        }
+        for (JsonNode p : root.path("process")) {
+            insertSection(planId, "PROCESS", seq++, p.toString(), null);
+        }
+        if (root.has("boardDesign")) {
+            insertSection(planId, "BOARD", seq++, root.path("boardDesign").asText(), null);
+        }
+        if (root.path("homework").isArray()) {
+            insertSection(planId, "HOMEWORK", seq++, root.path("homework").toString(), null);
+        }
+
+杏坛智备乡村教师AI备课助手软件 V1.0    第 14 页（共 86 页）
+        if (root.path("keyPoints").isArray()) {
+            insertSection(planId, "KEY_POINT", seq++, root.path("keyPoints").toString(), null);
+        }
+    }
+
+    private void insertSection(Long planId, String type, int seq, String content, String standardRef) {
+        LessonSection section = new LessonSection();
+        section.setLessonPlanId(planId);
+        section.setSectionType(type);
+        section.setSeq(seq);
+        section.setContent(content);
+        section.setStandardRef(standardRef);
+        sectionMapper.insert(section);
+    }
+}
+
+// ===== backend\application\src\main\java\com\xingtan\application\Application.java =====
+package com.xingtan.application;
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.mybatis.spring.annotation.MapperScan;
+
+/**
+ * 杏坛智备后端启动类
+ */
+@MapperScan({
+        "com.xingtan.system.mapper",
+        "com.xingtan.kb.mapper",
+        "com.xingtan.ai.mapper",
+        "com.xingtan.lesson.mapper",
+        "com.xingtan.stats.mapper"
+})
+@SpringBootApplication(scanBasePackages = "com.xingtan")
+public class Application {
+
+    public static void main(String[] args) {
+        SpringApplication.run(Application.class, args);
+    }
+}
+
+// ===== backend\application\src\main\java\com\xingtan\application\config\MybatisPlusConfig.java =====
+package com.xingtan.application.config;
+
+import com.baomidou.mybatisplus.annotation.DbType;
+import com.baomidou.mybatisplus.extension.plugins.MybatisPlusInterceptor;
+import com.baomidou.mybatisplus.extension.plugins.inner.PaginationInnerInterceptor;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+
+
+杏坛智备乡村教师AI备课助手软件 V1.0    第 15 页（共 86 页）
+/**
+ * MyBatis-Plus 配置：分页插件
+ */
+@Configuration
+public class MybatisPlusConfig {
+
+    @Bean
+    public MybatisPlusInterceptor mybatisPlusInterceptor() {
+        MybatisPlusInterceptor interceptor = new MybatisPlusInterceptor();
+        PaginationInnerInterceptor pagination = new PaginationInnerInterceptor(DbType.POSTGRE_SQL);
+        pagination.setMaxLimit(500L);
+        interceptor.addInnerInterceptor(pagination);
+        return interceptor;
+    }
+}
+
+// ===== backend\application\src\main\java\com\xingtan\application\init\TextbookDataInitializer.java =====
+package com.xingtan.application.init;
+
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.xingtan.kb.entity.KbChunk;
+import com.xingtan.kb.entity.KbDocument;
+import com.xingtan.kb.mapper.KbChunkMapper;
+import com.xingtan.kb.mapper.KbDocumentMapper;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.ApplicationArguments;
+import org.springframework.boot.ApplicationRunner;
+import org.springframework.core.io.ClassPathResource;
+import org.springframework.stereotype.Component;
+
+import java.io.InputStream;
+
+/**
+ * 教材课文库初始化：从 classpath:db/textbooks.json 导入小学/初中全学段课文与单元目录
+ * （课标、教材、模板、案例等其余知识库内容由建表脚本提供）
+ */
+@Slf4j
+@Component
+@RequiredArgsConstructor
+public class TextbookDataInitializer implements ApplicationRunner {
+
+    private final KbDocumentMapper documentMapper;
+    private final KbChunkMapper chunkMapper;
+    private final ObjectMapper objectMapper;
+
+    @Override
+    public void run(ApplicationArguments args) {
+
+杏坛智备乡村教师AI备课助手软件 V1.0    第 16 页（共 86 页）
+        try (InputStream in = new ClassPathResource("db/textbooks.json").getInputStream()) {
+            JsonNode root = objectMapper.readTree(in);
+            int docs = 0;
+            int chunks = 0;
+            int skipped = 0;
+            for (JsonNode node : root) {
+                String title = node.path("title").asText();
+                Long exists = documentMapper.selectCount(new LambdaQueryWrapper<KbDocument>()
+                        .eq(KbDocument::getDocType, "TEXTBOOK")
+                        .eq(KbDocument::getTitle, title));
+                if (exists != null && exists > 0) {
+                    skipped++;
+                    continue;
+                }
+                KbDocument doc = new KbDocument();
+                doc.setTitle(title);
+                doc.setDocType("TEXTBOOK");
+                doc.setSubject(node.path("subject").asText());
+                doc.setGrade(node.path("grade").asText());
+                doc.setTextbookVersion(node.path("version").asText());
+                doc.setStatus(1);
+                documentMapper.insert(doc);
+                docs++;
+
+                int seq = 0;
+                for (JsonNode unit : node.path("units")) {
+                    StringBuilder content = new StringBuilder();
+                    content.append(doc.getTitle()).append(" ");
+                    content.append(unit.path("name").asText()).append("：");
+                    StringBuilder items = new StringBuilder();
+                    for (JsonNode item : unit.path("items")) {
+                        items.append(item.asText()).append("、");
+                    }
+                    if (items.length() > 0) {
+                        items.setLength(items.length() - 1);
+                    }
+                    content.append(items);
+                    KbChunk chunk = new KbChunk();
+                    chunk.setDocId(doc.getId());
+                    chunk.setSeq(seq++);
+                    chunk.setContent(content.toString());
+                    chunkMapper.insert(chunk);
+                    chunks++;
+                }
+            }
+            log.info("教材课文库初始化完成：新增 {} 册 / {} 个单元条目，跳过已存在 {} 册", docs, chunks, skipped);
+        } catch (Exception e) {
+            log.error("教材课文库初始化失败", e);
+        }
+    }
+
+杏坛智备乡村教师AI备课助手软件 V1.0    第 17 页（共 86 页）
+}
+
+// ===== backend\application\src\main\resources\application-demo.yml =====
+# 演示模式：使用内置 H2 数据库，无需安装 PostgreSQL，用于快速看效果
+spring:
+  datasource:
+    url: "jdbc:h2:mem:xingtan;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE"
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+  sql:
+    init:
+      mode: always
+      encoding: UTF-8
+      schema-locations: classpath:db/h2-schema.sql
+
+h2:
+  console:
+    enabled: true
+    path: /h2-console
+
+mybatis-plus:
+  configuration:
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+
+// ===== backend\application\src\main\resources\application.yml =====
+server:
+  port: 8080
+  servlet:
+    encoding:
+      charset: UTF-8
+      enabled: true
+      force: true
+
+spring:
+  application:
+    name: xingtan
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:xingtan}
+    username: ${DB_USER:xingtan}
+    password: ${DB_PASSWORD:xingtan123}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+
+杏坛智备乡村教师AI备课助手软件 V1.0    第 18 页（共 86 页）
+      timeout: 5s
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+  global-config:
+    banner: false
+    db-config:
+      id-type: auto
+
+xingtan:
+  ai:
+    default-provider: deepseek
+    providers:
+      deepseek:
+        base-url: https://api.deepseek.com
+        api-key: ${DEEPSEEK_API_KEY:}
+        model: deepseek-chat
+      qwen:
+        base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
+        api-key: ${QWEN_API_KEY:}
+        model: qwen-plus
+  minio:
+    endpoint: ${MINIO_ENDPOINT:http://localhost:9000}
+    access-key: ${MINIO_ACCESS_KEY:minioadmin}
+    secret-key: ${MINIO_SECRET_KEY:minioadmin}
+    bucket: xingtan
+
+logging:
+  level:
+    com.xingtan: debug
+
+// ===== backend\application\src\main\resources\db\h2-schema.sql =====
+-- 演示模式数据库结构（H2，PostgreSQL 兼容模式）
+-- 生产环境使用 db/init.sql（PostgreSQL + pgvector）
+
+CREATE TABLE IF NOT EXISTS school (
+    id          BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+    name        VARCHAR(100) NOT NULL,
+    region      VARCHAR(100),
+    level       VARCHAR(20),
+    type        VARCHAR(20),
+    status      SMALLINT DEFAULT 1,
+    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS sys_user (
+    id            BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+    phone         VARCHAR(20) UNIQUE,
+
+杏坛智备乡村教师AI备课助手软件 V1.0    第 19 页（共 86 页）
+    password      VARCHAR(100),
+    nickname      VARCHAR(50),
+    role          VARCHAR(20) DEFAULT 'TEACHER',
+    school_id     BIGINT,
+    status        SMALLINT DEFAULT 1,
+    last_login_at TIMESTAMP,
+    created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS teacher_profile (
+    id             BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+    user_id        BIGINT NOT NULL,
+    subjects       VARCHAR(255),
+    grades         VARCHAR(255),
+    teaching_years SMALLINT,
+    weak_network   BOOLEAN DEFAULT FALSE,
+    created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS class_group (
+    id         BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+    school_id  BIGINT NOT NULL,
+    grade      VARCHAR(20),
+    class_name VARCHAR(50)
+);
+
+CREATE TABLE IF NOT EXISTS kb_document (
+    id               BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+    title            VARCHAR(200) NOT NULL,
+    doc_type         VARCHAR(30) NOT NULL,
+    subject          VARCHAR(30),
+    grade            VARCHAR(20),
+    textbook_version VARCHAR(50),
+    status           SMALLINT DEFAULT 1,
+    meta             CLOB,
+    created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS kb_chunk (
+    id        BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+    doc_id    BIGINT NOT NULL,
+    seq       INT,
+    content   CLOB NOT NULL,
+    metadata  CLOB,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS prompt_template (
+    id          BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+    scene       VARCHAR(50) NOT NULL,
+
+杏坛智备乡村教师AI备课助手软件 V1.0    第 20 页（共 86 页）
+    subject     VARCHAR(30),
+    lesson_type VARCHAR(30),
+    version     INT DEFAULT 1,
+    content     CLOB NOT NULL,
+    config      CLOB,
+    status      SMALLINT DEFAULT 1,
+    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS generation_task (
+    id            BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+    user_id       BIGINT NOT NULL,
+    scene         VARCHAR(30) DEFAULT 'LESSON_PLAN',
+    params        CLOB,
+    provider      VARCHAR(30),
+    status        VARCHAR(20) DEFAULT 'PENDING',
+    error_message CLOB,
+    cost_cents    INT DEFAULT 0,
+    created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS lesson_plan (
+    id            BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+    task_id       BIGINT,
+    user_id       BIGINT NOT NULL,
+    title         VARCHAR(200),
+    subject       VARCHAR(30),
+    grade         VARCHAR(20),
+    textbook      VARCHAR(100),
+    lesson_type   VARCHAR(30),
+    content       CLOB,
+    quality_score SMALLINT,
+    status        SMALLINT DEFAULT 1,
+    created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS lesson_section (
+    id             BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+    lesson_plan_id BIGINT NOT NULL,
+    section_type   VARCHAR(30),
+    seq            INT,
+    content        CLOB,
+    standard_ref   VARCHAR(200)
+);
+
+CREATE TABLE IF NOT EXISTS exercise (
+    id              BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+    lesson_plan_id  BIGINT,
+
+杏坛智备乡村教师AI备课助手软件 V1.0    第 21 页（共 86 页）
+    task_id         BIGINT,
+    subject         VARCHAR(30),
+    grade           VARCHAR(20),
+    knowledge_point VARCHAR(100),
+    difficulty      VARCHAR(10),
+    type            VARCHAR(20),
+    content         CLOB,
+    answer          CLOB,
+    analysis        CLOB
+);
+
+CREATE TABLE IF NOT EXISTS usage_log (
+    id           BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+    user_id      BIGINT,
+    school_id    BIGINT,
+    action       VARCHAR(50),
+    scene        VARCHAR(30),
+    duration_sec INT,
+    cost_cents   INT,
+    created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS feedback (
+    id             BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+    user_id        BIGINT,
+    lesson_plan_id BIGINT,
+    type           VARCHAR(20),
+    content        CLOB,
+    created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS survey (
+    id         BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+    school_id  BIGINT,
+    round      VARCHAR(20),
+    teacher_id BIGINT,
+    metric     VARCHAR(50),
+    metric_value NUMERIC(10,2),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS model_config (
+    id             BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+    provider       VARCHAR(30),
+    model          VARCHAR(50),
+    api_key_cipher VARCHAR(255),
+    enabled        BOOLEAN DEFAULT TRUE,
+    priority       INT,
+    note           VARCHAR(200)
+);
+
+杏坛智备乡村教师AI备课助手软件 V1.0    第 22 页（共 86 页）
+
+CREATE TABLE IF NOT EXISTS content_review_log (
+    id           BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+    task_id      BIGINT,
+    content_type VARCHAR(30),
+    result       VARCHAR(20),
+    detail       CLOB,
+    created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+INSERT INTO school (id, name, region, level, type) VALUES (1, '演示学校-新乡某乡村小学', '新乡市', '小学', '公办');
+INSERT INTO sys_user (id, phone, password, nickname, role, school_id, status)
+VALUES (1, '13800000000', '123456', '演示教师', 'TEACHER', 1, 1);
+
+-- 知识库种子：课标 / 教材 / 模板 / 乡土案例
+INSERT INTO kb_document (id, title, doc_type, subject, grade, textbook_version, status)
+VALUES (1, '2022版义务教育语文课程标准·核心素养与学习任务群', 'STANDARD', '语文', NULL, NULL, 1);
+INSERT INTO kb_document (id, title, doc_type, subject, grade, textbook_version, status)
+VALUES (2, '2022版义务教育数学课程标准·三会与内容领域', 'STANDARD', '数学', NULL, NULL, 1);
+INSERT INTO kb_document (id, title, doc_type, subject, grade, textbook_version, status)
+VALUES (3, '2022版义务教育英语课程标准·核心素养与内容六要素', 'STANDARD', '英语', NULL, NULL, 1);
+INSERT INTO kb_document (id, title, doc_type, subject, grade, textbook_version, status)
+VALUES (4, '新授课教案通用模板', 'TEMPLATE', NULL, NULL, NULL, 1);
+INSERT INTO kb_document (id, title, doc_type, subject, grade, textbook_version, status)
+VALUES (5, '人教版语文八年级上册·教材目录', 'TEXTBOOK', '语文', '八年级', '人教版', 1);
+INSERT INTO kb_document (id, title, doc_type, subject, grade, textbook_version, status)
+VALUES (6, '河南新乡乡土案例库', 'CASE', NULL, NULL, NULL, 1);
+
+INSERT INTO kb_chunk (doc_id, seq, content) VALUES (1, 1, '语文核心素养：文化自信、语言运用、思维能力、审美创造。学习任务群：语言文字积累与梳理、实用性阅读与交流、文学阅读与创意表达、思辨性阅读与表达、整本书阅读、跨学科学习。');
+INSERT INTO kb_chunk (doc_id, seq, content) VALUES (2, 1, '数学核心素养三会：会用数学的眼光观察现实世界，会用数学的思维思考现实世界，会用数学的语言表达现实世界。内容领域：数与代数、图形与几何、统计与概率、综合与实践。');
+INSERT INTO kb_chunk (doc_id, seq, content) VALUES (3, 1, '英语核心素养：语言能力、文化意识、思维品质、学习能力。课程内容六要素：主题、语篇、语言知识、文化知识、语言技能、学习策略。');
+INSERT INTO kb_chunk (doc_id, seq, content) VALUES (4, 1, '教案结构：教学目标（素养导向）→ 教学重难点 → 教学准备 → 教学过程（导入/新授/互动/练习/总结，每环节标注时间与师生活动）→ 板书设计 → 分层作业（基础/提高/拓展）→ 课后反思。');
+INSERT INTO kb_chunk (doc_id, seq, content) VALUES (5, 1, '人教版语文八年级上册目录：第一单元 活动探究·新闻；第二单元 回忆性散文（藤野先生、回忆我的母亲、列夫·托尔斯泰、美丽的颜色）；第三单元 古诗文（三峡、短文二篇、与朱元思书、唐诗五首）；第四单元 散文（背影、白杨礼赞、散文二篇、昆明的雨）；第五单元 说明文（中国石拱桥、苏州园林、蝉、梦回繁华）；第六单元 古诗文（孟子二章、愚公移山、周亚夫军细柳、诗词五首）。');
+INSERT INTO kb_chunk (doc_id, seq, content) VALUES (6, 1, '新乡乡土素材：中原农谷国家级农业科技平台；牧野大地麦收文化（三夏抢收）；封丘陈桥驿（宋太祖黄袍加身处）；辉县百泉；新乡南太行（万仙山、八里沟）；毗邻红旗渠精神（林州）；豫剧、河南坠子等非遗；平原新区黄河滩区生态治理。可用于情境导入与跨学科教学。');
+
+INSERT INTO prompt_template (scene, subject, lesson_type, version, content, status)
+VALUES ('LESSON_PLAN', NULL, NULL, 1,
+        '你是资深中小学教研专家，依据2022版义务教育课程标准，严格围绕用户提供的【课题】生成完整教案，禁止偏离课题。输出严格的 JSON 格式（字段：title, subject, grade, textbook, lessonType, objectives[{type,content,standardRef}], keyPoints[], difficultPoints[], process[{stage,duration,activities,teacher,student}], boardDesign, homework[{level,items[]}], qualityScore, standardCards[{ref,content}]）。要求：1) title 与课题一致；2) 教学目标对应核心素养且必须与课题直接相关；3) 教学过程标注环节与时长，总计约40/45分钟；4) 板书设计与课题匹配；5) 作业为分层作业（基础/提高/拓展）；6) standardCards 必须给出课标依据并引用真实课标条目；7) 全部字段必须填充真实内容，禁止空数组、空字符串。只输出 JSON，不要输出任何其他文字。',
+        1);
+
+-- 演示教案（《背影》第一课时，供编辑器与图表展示）
+INSERT INTO lesson_plan (id, task_id, user_id, title, subject, grade, textbook, lesson_type, content, quality_score, status)
+VALUES (1, NULL, 1, '《背影》第一课时', '语文', '八年级', '人教版', '新授课',
+        '{"objectives":[{"type":"文化自信","content":"感受经典散文的语言魅力，体悟中华民族孝亲敬长的传统美德。","standardRef":"课标·语文·文学阅读与创意表达"},{"type":"语言运用","content":"积累「蹒跚」「颓唐」等词语，学习抓住人物特征进行描写。","standardRef":"课标·语文·语言文字积累与梳理"},{"type":"思维能力","content":"通过四次「背影」的分析，理解散文「形散神聚」的特点。","standardRef":"课标·语文·思辨性阅读与表达"}],"keyPoints":["四次「背影」的描写及其作用"],"difficultPoints":["结合时代背景理解父子情感的变化"],"process":[{"stage":"情境导入","duration":5,"activities":"播放《父亲》歌曲片段，提问：你印象最深的父亲的背影是什么？"},{"stage":"初读感知","duration":8,"activities":"自由朗读课文，梳理文章结构，概括四次背影出现的场景。"},{"stage":"精读背影","duration":15,"activities":"聚焦「望父买橘」片段，品析动作描写，体会父爱；结合1925年写作背景理解作者情感变化。"},{"stage":"小组讨论","duration":10,"activities":"讨论：为什么「我的眼泪又来了」？结合生活分享亲情故事。"},{"stage":"总结作业","duration":7,"activities":"总结「背影」的线索作用，布置分层作业。"}],"boardDesign":"背影\n├ 难忘背影（回忆）\n├ 望父买橘（刻画）\n├ 惜别背影（抒情）\n└ 再现背影（升华）","homework":[{"level":"基础","items":["积累本课生字词并抄写"]},{"level":"提高","items":["以「我的父亲/母亲」为题写300字片段，运用动作描写"]},{"level":"拓展","items":["阅读《荷塘月色》，对比两篇文章的语言风格"]}],"qualityScore":92,"standardCards":[{"ref":"课标·语文·文学阅读与创意表达","content":"阅读叙事类作品，能把握主要内容，理解人物形象，体会作者情感。"}]}',
+        92, 1);
+
+INSERT INTO lesson_section (lesson_plan_id, section_type, seq, content, standard_ref) VALUES (1, 'OBJECTIVE', 0, '{"type":"文化自信","content":"感受经典散文的语言魅力，体悟中华民族孝亲敬长的传统美德。","standardRef":"课标·语文·文学阅读与创意表达"}', '课标·语文·文学阅读与创意表达');
+INSERT INTO lesson_section (lesson_plan_id, section_type, seq, content, standard_ref) VALUES (1, 'OBJECTIVE', 1, '{"type":"语言运用","content":"积累「蹒跚」「颓唐」等词语，学习抓住人物特征进行描写。","standardRef":"课标·语文·语言文字积累与梳理"}', '课标·语文·语言文字积累与梳理');
+INSERT INTO lesson_section (lesson_plan_id, section_type, seq, content, standard_ref) VALUES (1, 'PROCESS', 2, '{"stage":"情境导入","duration":5,"activities":"播放《父亲》歌曲片段，提问：你印象最深的父亲的背影是什么？"}', NULL);
+
+
+杏坛智备乡村教师AI备课助手软件 V1.0    第 23 页（共 86 页）
+-- 演示埋点与审核记录
+INSERT INTO usage_log (user_id, school_id, action, scene, duration_sec, created_at)
+VALUES (1, 1, 'LOGIN', 'APP', 5, DATEADD('DAY', 0, CURRENT_TIMESTAMP));
+INSERT INTO usage_log (user_id, school_id, action, scene, duration_sec, created_at)
+VALUES (1, 1, 'GENERATE', 'LESSON_PLAN', 95, DATEADD('DAY', -1, CURRENT_TIMESTAMP));
+INSERT INTO usage_log (user_id, school_id, action, scene, duration_sec, created_at)
+VALUES (1, 1, 'EXPORT', 'LESSON_PLAN', 12, DATEADD('DAY', -1, CURRENT_TIMESTAMP));
+INSERT INTO usage_log (user_id, school_id, action, scene, duration_sec, created_at)
+VALUES (1, 1, 'GENERATE', 'LESSON_PLAN', 110, DATEADD('DAY', -2, CURRENT_TIMESTAMP));
+
+INSERT INTO content_review_log (task_id, content_type, result, detail)
+VALUES (NULL, 'LESSON_PLAN', 'PASS', '自动审核通过：未检出敏感内容');
+
+-- 种子数据占用了显式 ID，重置自增序号避免后续插入冲突
+ALTER TABLE school ALTER COLUMN id RESTART WITH 100;
+ALTER TABLE sys_user ALTER COLUMN id RESTART WITH 100;
+ALTER TABLE kb_document ALTER COLUMN id RESTART WITH 100;
+ALTER TABLE kb_chunk ALTER COLUMN id RESTART WITH 100;
+ALTER TABLE prompt_template ALTER COLUMN id RESTART WITH 100;
+ALTER TABLE lesson_plan ALTER COLUMN id RESTART WITH 100;
+ALTER TABLE lesson_section ALTER COLUMN id RESTART WITH 100;
+ALTER TABLE usage_log ALTER COLUMN id RESTART WITH 100;
+ALTER TABLE content_review_log ALTER COLUMN id RESTART WITH 100;
+
+// ===== backend\common\src\main\java\com\xingtan\common\exception\BusinessException.java =====
+package com.xingtan.common.exception;
+
+import lombok.Getter;
+
+/**
+ * 业务异常
+ */
+@Getter
+public class BusinessException extends RuntimeException {
+
+    private final int code;
+
+    public BusinessException(String message) {
+        this(500, message);
+    }
+
+    public BusinessException(int code, String message) {
+        super(message);
+        this.code = code;
+    }
+}
+
+// ===== backend\common\src\main\java\com\xingtan\common\exception\GlobalExceptionHandler.java =====
+package com.xingtan.common.exception;
+
+
+杏坛智备乡村教师AI备课助手软件 V1.0    第 24 页（共 86 页）
+import com.xingtan.common.result.Result;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.RestControllerAdvice;
+
+/**
+ * 全局异常处理
+ */
+@Slf4j
+@RestControllerAdvice
+public class GlobalExceptionHandler {
+
+    @ExceptionHandler(BusinessException.class)
+    public Result<Void> handleBusinessException(BusinessException e) {
+        log.warn("业务异常: code={}, message={}", e.getCode(), e.getMessage());
+        return Result.fail(e.getCode(), e.getMessage());
+    }
+
+    @ExceptionHandler(Exception.class)
+    public Result<Void> handleException(Exception e) {
+        log.error("系统异常", e);
+        return Result.fail(500, "系统繁忙，请稍后重试");
+    }
+}
+
+// ===== backend\common\src\main\java\com\xingtan\common\result\PageResult.java =====
+package com.xingtan.common.result;
+
+import lombok.AllArgsConstructor;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
+import java.util.List;
+
+/**
+ * 分页返回体
+ */
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+public class PageResult<T> {
+
+    private long total;
+    private long page;
+    private long size;
+    private List<T> records;
+}
+
+// ===== backend\common\src\main\java\com\xingtan\common\result\Result.java =====
+package com.xingtan.common.result;
+
+杏坛智备乡村教师AI备课助手软件 V1.0    第 25 页（共 86 页）
+
+import lombok.Data;
+
+/**
+ * 统一返回体
+ */
+@Data
+public class Result<T> {
+
+    private int code;
+    private String message;
+    private T data;
+
+    public static <T> Result<T> ok() {
+        return ok(null);
+    }
+
+    public static <T> Result<T> ok(T data) {
+        Result<T> r = new Result<>();
+        r.code = 200;
+        r.message = "success";
+        r.data = data;
+        return r;
+    }
+
+    public static <T> Result<T> fail(String message) {
+        return fail(500, message);
+    }
+
+    public static <T> Result<T> fail(int code, String message) {
+        Result<T> r = new Result<>();
+        r.code = code;
+        r.message = message;
+        return r;
+    }
+}
+
+// ===== backend\kb\src\main\java\com\xingtan\kb\controller\KbController.java =====
+package com.xingtan.kb.controller;
+
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.xingtan.common.result.PageResult;
+import com.xingtan.common.result.Result;
+import com.xingtan.kb.entity.KbDocument;
+import com.xingtan.kb.mapper.KbDocumentMapper;
+import lombok.RequiredArgsConstructor;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+
+杏坛智备乡村教师AI备课助手软件 V1.0    第 26 页（共 86 页）
+import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
+
+/**
+ * 知识库接口
+ * TODO(骨架阶段): 文档上传/解析/分块/向量化接入 RAG 管线
+ */
+@RestController
+@RequestMapping("/api/kb")
+@RequiredArgsConstructor
+public class KbController {
+
+    private final KbDocumentMapper documentMapper;
+
+    @GetMapping("/documents")
+    public Result<PageResult<KbDocument>> documents(
+            @RequestParam(defaultValue = "1") long page,
+            @RequestParam(defaultValue = "20") long size,
+            @RequestParam(required = false) String docType) {
+        LambdaQueryWrapper<KbDocument> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(docType != null && !docType.isBlank(), KbDocument::getDocType, docType)
+                .orderByDesc(KbDocument::getId);
+        Page<KbDocument> result = documentMapper.selectPage(new Page<>(page, size), wrapper);
+        return Result.ok(new PageResult<>(result.getTotal(), page, size, result.getRecords()));
+    }
+}
+
+// ===== backend\kb\src\main\java\com\xingtan\kb\entity\KbChunk.java =====
+package com.xingtan.kb.entity;
+
+import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableId;
+import com.baomidou.mybatisplus.annotation.TableName;
+import lombok.Data;
+
+import java.time.LocalDateTime;
+
+/**
+ * 知识库分块
+ */
+@Data
+@TableName("kb_chunk")
+public class KbChunk {
+
+    @TableId(type = IdType.AUTO)
+    private Long id;
+    private Long docId;
+    private Integer seq;
+    private String content;
+
+杏坛智备乡村教师AI备课助手软件 V1.0    第 27 页（共 86 页）
+    private String metadata;
+    private LocalDateTime createdAt;
+}
+
+// ===== backend\kb\src\main\java\com\xingtan\kb\entity\KbDocument.java =====
+package com.xingtan.kb.entity;
+
+import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableId;
+import com.baomidou.mybatisplus.annotation.TableName;
+import lombok.Data;
+
+import java.time.LocalDateTime;
+
+/**
+ * 知识库文档（课标/教材/模板/乡土案例）
+ */
+@Data
+@TableName("kb_document")
+public class KbDocument {
+
+    @TableId(type = IdType.AUTO)
+    private Long id;
+    private String title;
+    private String docType;
+    private String subject;
+    private String grade;
+    private String textbookVersion;
+    private Integer status;
+    private String meta;
+    private LocalDateTime createdAt;
+}
+
+// ===== backend\kb\src\main\java\com\xingtan\kb\mapper\KbChunkMapper.java =====
+package com.xingtan.kb.mapper;
+
+import com.baomidou.mybatisplus.core.mapper.BaseMapper;
+import com.xingtan.kb.entity.KbChunk;
+import org.apache.ibatis.annotations.Mapper;
+
+/**
+ * 知识库分块 Mapper
+ */
+@Mapper
+public interface KbChunkMapper extends BaseMapper<KbChunk> {
+}
+
+// ===== backend\kb\src\main\java\com\xingtan\kb\mapper\KbDocumentMapper.java =====
+package com.xingtan.kb.mapper;
+
+
+杏坛智备乡村教师AI备课助手软件 V1.0    第 28 页（共 86 页）
+import com.baomidou.mybatisplus.core.mapper.BaseMapper;
+import com.xingtan.kb.entity.KbDocument;
+import org.apache.ibatis.annotations.Mapper;
+
+/**
+ * 知识库文档 Mapper
+ */
+@Mapper
+public interface KbDocumentMapper extends BaseMapper<KbDocument> {
+}
+
+// ===== backend\lesson\src\main\java\com\xingtan\lesson\controller\LessonController.java =====
+package com.xingtan.lesson.controller;
+
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.xingtan.common.result.PageResult;
+import com.xingtan.common.exception.BusinessException;
+import com.xingtan.common.result.Result;
+import com.xingtan.lesson.entity.LessonPlan;
+import com.xingtan.lesson.mapper.LessonPlanMapper;
+import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * 教案接口
+ */
+@RestController
+@RequestMapping("/api/lessons")
+@RequiredArgsConstructor
+public class LessonController {
+
+    private final LessonPlanMapper lessonPlanMapper;
+
+杏坛智备乡村教师AI备课助手软件 V1.0    第 29 页（共 86 页）
+    private final ObjectMapper objectMapper;
+
+    @GetMapping
+    public Result<PageResult<LessonPlan>> list(
+            @RequestParam(required = false) Long userId,
+            @RequestParam(defaultValue = "1") long page,
+            @RequestParam(defaultValue = "20") long size) {
+        LambdaQueryWrapper<LessonPlan> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(userId != null, LessonPlan::getUserId, userId)
+                .orderByDesc(LessonPlan::getId);
+        Page<LessonPlan> result = lessonPlanMapper.selectPage(new Page<>(page, size), wrapper);
+        return Result.ok(new PageResult<>(result.getTotal(), page, size, result.getRecords()));
+    }
+
+    @GetMapping("/{id}")
+    public Result<LessonPlan> get(@PathVariable Long id) {
+        LessonPlan plan = lessonPlanMapper.selectById(id);
+        if (plan == null) {
+            throw new BusinessException(404, "教案不存在");
+        }
+        return Result.ok(plan);
+    }
+
+    @PutMapping("/{id}")
+    public Result<LessonPlan> update(@PathVariable Long id, @RequestBody LessonPlan plan) {
+        plan.setId(id);
+        plan.setUpdatedAt(LocalDateTime.now());
+        lessonPlanMapper.updateById(plan);
+        return Result.ok(lessonPlanMapper.selectById(id));
+    }
+
+    @GetMapping("/{id}/export")
+    public ResponseEntity<String> export(@PathVariable Long id) throws Exception {
+        LessonPlan plan = lessonPlanMapper.selectById(id);
+        if (plan == null) {
+            throw new BusinessException(404, "教案不存在");
+        }
+        String md = toMarkdown(plan);
+        String filename = URLEncoder.encode((plan.getTitle() == null ? "教案" : plan.getTitle()) + ".md", StandardCharsets.UTF_8);
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename*=UTF-8''" + filename)
+                .contentType(MediaType.TEXT_PLAIN)
+                .body(md);
+    }
+
+    private String toMarkdown(LessonPlan plan) throws Exception {
+        StringBuilder md = new StringBuilder();
+        md.append("# ").append(plan.getTitle()).append("\n\n");
+        md.append("> ").append(plan.getSubject()).append(" · ").append(plan.getGrade())
+                .append(" · ").append(plan.getTextbook()).append("\n\n");
+
+杏坛智备乡村教师AI备课助手软件 V1.0    第 30 页（共 86 页）
+        JsonNode root = objectMapper.readTree(plan.getContent());
+        md.append("## 教学目标\n\n");
+        for (JsonNode obj : root.path("objectives")) {
+            md.append("- **").append(obj.path("type").asText()).append("**：")
+                    .append(obj.path("content").asText()).append("\n");
+        }
+        md.append("\n## 教学重难点\n\n");
+        md.append("- 重点：").append(String.join("；", toStrings(root.path("keyPoints")))).append("\n");
+        md.append("- 难点：").append(String.join("；", toStrings(root.path("difficultPoints")))).append("\n");
+        md.append("\n## 教学过程\n\n");
+        for (JsonNode p : root.path("process")) {
+            md.append("### ").append(p.path("stage").asText()).append("（")
+                    .append(p.path("duration").asText()).append("分钟）\n\n");
+            md.append(p.path("activities").asText()).append("\n\n");
+        }
+        md.append("## 板书设计\n\n").append(root.path("boardDesign").asText()).append("\n\n");
+        md.append("## 分层作业\n\n");
+        for (JsonNode hw : root.path("homework")) {
+            md.append("**").append(hw.path("level").asText()).append("**\n");
+            for (JsonNode item : hw.path("items")) {
+                md.append("- ").append(item.asText()).append("\n");
+            }
+            md.append("\n");
+        }
+        md.append("## 课标依据\n\n");
+        for (JsonNode card : root.path("standardCards")) {
+            md.append("- ").append(card.path("ref").asText()).append("：")
+                    .append(card.path("content").asText()).append("\n");
+        }
+        return md.toString();
+    }
+
+    private List<String> toStrings(JsonNode array) {
+        List<String> out = new ArrayList<>();
+        for (JsonNode n : array) {
+            out.add(n.asText());
+        }
+        return out;
+    }
+}
+
+// ===== backend\lesson\src\main\java\com\xingtan\lesson\entity\LessonPlan.java =====
+package com.xingtan.lesson.entity;
+
+import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableId;
+import com.baomidou.mybatisplus.annotation.TableName;
+import lombok.Data;
+
+import java.time.LocalDateTime;
+
